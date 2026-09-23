@@ -1,0 +1,47 @@
+# BloomRepo 2.1
+# Secrets belong in .env, not in this file.
+
+[general]
+interval_seconds = 30
+max_pages_per_cycle = 5
+lookback_hours = 3
+log_level = "info"
+max_concurrent_requests = 4
+search_interval_seconds = 60
+
+[auth]
+timeout_seconds = 25
+user_agent = "BloomRepo/2.1 (+https://github.com/)"
+tokens = []
+
+[streams]
+enable_sequential_stream = true
+enable_events_stream = true
+enable_search_stream = true
+search_queries = []
+
+[filtering]
+enable_spam_filter = true
+ignore_forks = true
+min_description_length = 0
+ignore_name_patterns = [
+    "^auto-repo-\\d+",
+    "^repo-\\d+$",
+    "^test-\\d+$",
+    "^homework-"
+]
+priority_keywords = []
+allowed_languages = []
+
+[storage]
+database_path = "repos.db"
+state_path = "_state.json"
+enable_wal = true
+enable_log_file = true
+enable_jsonl_stream = true
+
+[notifications]
+enable_windows_toast = true
+toast_priority_only = false
+timeout_seconds = 10
+max_items_per_message = 5

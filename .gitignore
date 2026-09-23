@@ -1,0 +1,36 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and SQLite journals
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Runtime state and generated data
+_state.json
+_state.json.tmp
+*.log
+*.jsonl
+new_repos_*.log
+repos_*.jsonl
+
+# Internal patches and backup files
+PATCH_INSTRUCTIONS.md
+*.backup
+*.bak
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
