@@ -126,7 +126,7 @@ The desktop interface is built using `eframe` and `egui`, providing:
 ### 1. Clone the repository
 
 ```powershell
-git clone https://github.com/your-username/BloomRepo.git
+git clone https://github.com/okba14/BloomRepo.git
 cd BloomRepo
 ```
 
