@@ -171,7 +171,7 @@ fn show_windows_toast(repos: &[&RepoItem]) {
         .spawn();
 }
 
-#[cfg(windows)]
+#[allow(dead_code)]
 fn ps_quote(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -185,7 +185,7 @@ fn encode_powershell_script(script: &str) -> String {
     base64_encode(&utf16)
 }
 
-#[cfg(windows)]
+#[allow(dead_code)]
 fn base64_encode(data: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
