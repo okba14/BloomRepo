@@ -44,10 +44,13 @@ pub enum NotifyError {
     #[error("secure notification HTTP client is unavailable")]
     ClientUnavailable,
     #[error("Windows toast command failed")]
+    #[allow(dead_code)]
     ToastFailed,
     #[error("Windows toast command timed out")]
+    #[allow(dead_code)]
     ToastTimeout,
     #[error("Windows toast delivery was cancelled")]
+    #[allow(dead_code)]
     ToastCancelled,
 }
 
