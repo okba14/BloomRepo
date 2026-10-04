@@ -549,7 +549,10 @@ async fn run_async_action(config: AppConfig, db: Database, action: Action) -> Ap
             Ok(result) => {
                 if is_once {
                     let delivered = engine.dispatch_outbox().await?;
-                    info!(delivered, "one-shot outbox delivery pass completed; remaining events stay durable");
+                    info!(
+                        delivered,
+                        "one-shot outbox delivery pass completed; remaining events stay durable"
+                    );
                 }
                 for repo in &result.items {
                     ui::UI::print_discovered_repo(repo);

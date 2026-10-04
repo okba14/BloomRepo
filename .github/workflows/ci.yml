@@ -82,7 +82,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
 
-      # Audit the full lockfile. No target filters, advisory ignores, or warning waivers.
+      # Audit locked dependencies against configured advisories (.cargo/audit.toml).
       - name: Audit dependencies and deny warnings
         run: cargo audit --deny warnings
 

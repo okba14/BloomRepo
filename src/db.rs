@@ -460,7 +460,12 @@ impl Database {
         }
         if let Some(state) = state {
             for source in &state.sources {
-                if source.name.len() > 64 || source.status.len() > 64 || source.message.len() > 4096 || source.last_success_at < 0 || source.next_allowed_at < 0 {
+                if source.name.len() > 64
+                    || source.status.len() > 64
+                    || source.message.len() > 4096
+                    || source.last_success_at < 0
+                    || source.next_allowed_at < 0
+                {
                     return Err(rusqlite::Error::InvalidQuery);
                 }
                 tx.execute("INSERT INTO source_status(name,status,message,last_success_at,next_allowed_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(name) DO UPDATE SET status=excluded.status,message=excluded.message,last_success_at=MAX(source_status.last_success_at,excluded.last_success_at),next_allowed_at=excluded.next_allowed_at", params![source.name,source.status,scrub(&source.message),source.last_success_at,source.next_allowed_at])?;
@@ -1941,7 +1946,7 @@ mod tests {
                 .unwrap(),
             "https://github.com/owner/legacy"
         );
-        assert!(ingest(&db, &[item.clone()], "accepted").is_empty());
+        assert!(ingest(&db, std::slice::from_ref(&item), "accepted").is_empty());
         let backups: Vec<_> = fs::read_dir(&fixture.0)
             .unwrap()
             .map(|p| p.unwrap().path())

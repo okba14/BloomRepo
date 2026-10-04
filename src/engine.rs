@@ -75,14 +75,19 @@ impl Engine {
         let new_install = persisted.is_none() && legacy.is_none();
         let mut state = persisted.or(legacy).unwrap_or_default();
         if new_install {
-            state.search_watermark = timestamp(Utc::now() - ChronoDuration::hours(config.general.lookback_hours));
+            state.search_watermark =
+                timestamp(Utc::now() - ChronoDuration::hours(config.general.lookback_hours));
             // Existing shipped data is a concrete migration anchor, not a search-sort guess.
             state.sequential_since = db.get_max_id()?;
         }
         validate_state(&state)?;
         state.schema_version = 3;
         let token_pool = TokenPool::new(config.auth.tokens.clone(), config.auth.user_agent.clone());
-        let crawler = GithubCrawler::with_concurrency(token_pool.clone(), config.auth.timeout_seconds, config.general.max_concurrent_requests);
+        let crawler = GithubCrawler::with_concurrency(
+            token_pool.clone(),
+            config.auth.timeout_seconds,
+            config.general.max_concurrent_requests,
+        );
         Ok(Self {
             filter: RepoFilter::new(config.filtering.clone()),
             config,
@@ -130,16 +135,23 @@ impl Engine {
         let mut succeeded = 0;
         let now = Utc::now().timestamp();
 
-        if self.config.streams.enable_events_stream && now >= next.events_next_at && source_due(&next, "events", now) {
+        if self.config.streams.enable_events_stream
+            && now >= next.events_next_at
+            && source_due(&next, "events", now)
+        {
             attempted += 1;
             match self.available(RateResource::Core).await {
                 Ok(()) => match self.crawler.fetch_events(next.events_etag.as_deref()).await {
                     Ok(page) => {
                         next.events_etag = page.etag;
                         next.last_events_at = now;
-                        next.events_next_at = now.saturating_add(page.poll_interval.unwrap_or(60).clamp(5, 86400) as i64);
+                        next.events_next_at =
+                            now.saturating_add(
+                                page.poll_interval.unwrap_or(60).clamp(5, 86400) as i64
+                            );
                         // Event descriptions are never persisted or notified before public visibility verification.
-                        let mut pending: HashSet<_> = next.pending_event_repositories.iter().cloned().collect();
+                        let mut pending: HashSet<_> =
+                            next.pending_event_repositories.iter().cloned().collect();
                         for item in page.items {
                             if pending.len() < 1000 {
                                 pending.insert(item.full_name);
@@ -157,15 +169,29 @@ impl Engine {
             }
         }
 
-        if self.config.streams.enable_search_stream && source_due(&next, "search", now)
-            && (!next.search_windows.is_empty() || now.saturating_sub(next.last_search_at) >= self.config.general.search_interval_seconds as i64)
+        if self.config.streams.enable_search_stream
+            && source_due(&next, "search", now)
+            && (!next.search_windows.is_empty()
+                || now.saturating_sub(next.last_search_at)
+                    >= self.config.general.search_interval_seconds as i64)
         {
             attempted += 1;
             match self.collect_search(&mut next, &mut candidates).await {
                 Ok(pages) => {
-                    let status = if next.search_windows.is_empty() { "healthy" } else { "catching_up" };
+                    let status = if next.search_windows.is_empty() {
+                        "healthy"
+                    } else {
+                        "catching_up"
+                    };
                     let message = format!("Fetched {pages} pages; {} bounded windows remain. Search is eventually indexed and reconciled with a ten-minute overlap, not an exhaustive GitHub archive.", next.search_windows.len());
-                    set_source(&mut next, "search", status, &message, now, now + self.config.general.search_interval_seconds as i64);
+                    set_source(
+                        &mut next,
+                        "search",
+                        status,
+                        &message,
+                        now,
+                        now + self.config.general.search_interval_seconds as i64,
+                    );
                     succeeded += 1;
                 }
                 Err(error) => source_error(&mut next, "search", &error, now),
@@ -194,18 +220,33 @@ impl Engine {
             }
         }
 
-        if self.config.monitoring.enabled && source_due(&next, "enrichment", now) && now >= next.enrichment_next_at {
+        if self.config.monitoring.enabled
+            && source_due(&next, "enrichment", now)
+            && now >= next.enrichment_next_at
+        {
             let mut pending = Vec::new();
-            for name in next.pending_event_repositories.iter().take(self.config.monitoring.enrich_per_cycle) {
+            for name in next
+                .pending_event_repositories
+                .iter()
+                .take(self.config.monitoring.enrich_per_cycle)
+            {
                 pending.push(name.clone());
             }
-            for item in self.db.enrichment_candidates(self.config.monitoring.enrich_per_cycle)? {
-                if !pending.contains(&item.full_name) && pending.len() < self.config.monitoring.enrich_per_cycle {
+            for item in self
+                .db
+                .enrichment_candidates(self.config.monitoring.enrich_per_cycle)?
+            {
+                if !pending.contains(&item.full_name)
+                    && pending.len() < self.config.monitoring.enrich_per_cycle
+                {
                     pending.push(item.full_name);
                 }
             }
             for item in candidates.values() {
-                if !item.metadata_complete && !pending.contains(&item.full_name) && pending.len() < self.config.monitoring.enrich_per_cycle {
+                if !item.metadata_complete
+                    && !pending.contains(&item.full_name)
+                    && pending.len() < self.config.monitoring.enrich_per_cycle
+                {
                     pending.push(item.full_name.clone());
                 }
             }
@@ -220,7 +261,8 @@ impl Engine {
                     }
                     match self.crawler.fetch_repository(&name).await {
                         Ok(mut item) => {
-                            next.pending_event_repositories.retain(|pending| pending != &name);
+                            next.pending_event_repositories
+                                .retain(|pending| pending != &name);
                             if !item.private {
                                 item.source = "enrichment".into();
                                 insert_candidate(&mut candidates, item);
@@ -228,8 +270,10 @@ impl Engine {
                             }
                         }
                         Err(error) => {
-                            if matches!(error, CrawlerError::Api { status } if status == reqwest::StatusCode::NOT_FOUND) {
-                                next.pending_event_repositories.retain(|pending| pending != &name);
+                            if matches!(error, CrawlerError::Api { status } if status == reqwest::StatusCode::NOT_FOUND)
+                            {
+                                next.pending_event_repositories
+                                    .retain(|pending| pending != &name);
                             }
                             last_error = Some(error);
                             break;
@@ -243,12 +287,18 @@ impl Engine {
                     let next_enrichment = next.enrichment_next_at;
                     set_source(&mut next, "enrichment", "healthy", &format!("Verified {completed} public metadata snapshots within the configured request budget."), now, next_enrichment);
                 }
-                if completed > 0 { succeeded += 1; }
+                if completed > 0 {
+                    succeeded += 1;
+                }
             }
         }
 
         if self.config.monitoring.enabled && source_due(&next, "watch", now) {
-            let watched = self.db.due_watched(now, self.config.monitoring.watch_interval_seconds, self.config.monitoring.watch_per_cycle)?;
+            let watched = self.db.due_watched(
+                now,
+                self.config.monitoring.watch_interval_seconds,
+                self.config.monitoring.watch_per_cycle,
+            )?;
             if !watched.is_empty() {
                 attempted += 1;
                 let mut completed = 0;
@@ -266,7 +316,10 @@ impl Engine {
                             }
                             match self.crawler.fetch_latest_release(&item.full_name).await {
                                 Ok(release) => item.latest_release = release,
-                                Err(error) => { last_error = Some(error); break; }
+                                Err(error) => {
+                                    last_error = Some(error);
+                                    break;
+                                }
                             }
                             item.source = "watch".into();
                             insert_candidate(&mut candidates, item);
@@ -274,10 +327,13 @@ impl Engine {
                         }
                         Ok(_) => {
                             self.db.quarantine_repository(previous.id)?;
-                            last_error = Some(CrawlerError::Api { status: reqwest::StatusCode::FORBIDDEN });
+                            last_error = Some(CrawlerError::Api {
+                                status: reqwest::StatusCode::FORBIDDEN,
+                            });
                         }
                         Err(error) => {
-                            if matches!(error, CrawlerError::Api { status } if status == reqwest::StatusCode::NOT_FOUND) {
+                            if matches!(error, CrawlerError::Api { status } if status == reqwest::StatusCode::NOT_FOUND)
+                            {
                                 self.db.quarantine_repository(previous.id)?;
                             }
                             last_error = Some(error);
@@ -290,11 +346,16 @@ impl Engine {
                 } else {
                     set_source(&mut next, "watch", "healthy", &format!("Refreshed {completed} watched repositories, including latest release tags. No repository code was downloaded or executed."), now, now + self.config.general.interval_seconds as i64);
                 }
-                if completed > 0 { succeeded += 1; }
+                if completed > 0 {
+                    succeeded += 1;
+                }
             }
         }
 
-        let mut items: Vec<_> = candidates.into_values().filter(|repo| !repo.private).collect();
+        let mut items: Vec<_> = candidates
+            .into_values()
+            .filter(|repo| !repo.private)
+            .collect();
         let mut assessments = Vec::with_capacity(items.len());
         for item in &mut items {
             // Rank sparse observations using stored verified metadata, without fabricating a new full snapshot.
@@ -311,10 +372,17 @@ impl Engine {
             item.is_priority = evaluated.is_priority;
             assessments.push(assessment);
         }
-        let spam_count = assessments.iter().filter(|a| a.decision == "rejected").count();
+        let spam_count = assessments
+            .iter()
+            .filter(|a| a.decision == "rejected")
+            .count();
         let mut channels = Notifier::new(self.config.notifications.clone()).channels();
-        if self.config.storage.enable_log_file { channels.push("log".into()); }
-        if self.config.storage.enable_jsonl_stream { channels.push("jsonl".into()); }
+        if self.config.storage.enable_log_file {
+            channels.push("log".into());
+        }
+        if self.config.storage.enable_jsonl_stream {
+            channels.push("jsonl".into());
+        }
         next.checked = timestamp(Utc::now());
         let new_items = self.db.ingest(&items, &assessments, &next, &channels)?;
         self.state = next;
@@ -324,8 +392,22 @@ impl Engine {
         }
         let priority_count = new_items.iter().filter(|repo| repo.is_priority).count();
         let (db_total, _, _) = self.db.get_stats()?;
-        let status = self.state.sources.iter().map(|source| format!("{}: {}", source.name, source.status)).collect::<Vec<_>>().join("; ");
-        Ok(CycleResult { cycle:self.cycle, items:new_items, spam_count, priority_count, duration_ms:started.elapsed().as_millis(), db_total, status })
+        let status = self
+            .state
+            .sources
+            .iter()
+            .map(|source| format!("{}: {}", source.name, source.status))
+            .collect::<Vec<_>>()
+            .join("; ");
+        Ok(CycleResult {
+            cycle: self.cycle,
+            items: new_items,
+            spam_count,
+            priority_count,
+            duration_ms: started.elapsed().as_millis(),
+            db_total,
+            status,
+        })
     }
 
     async fn available(&self, resource: RateResource) -> Result<(), CrawlerError> {
@@ -336,11 +418,20 @@ impl Engine {
         }
     }
 
-    async fn collect_sequential(&self, state: &mut AppState, candidates: &mut BTreeMap<i64, RepoItem>) -> Result<usize, CrawlerError> {
+    async fn collect_sequential(
+        &self,
+        state: &mut AppState,
+        candidates: &mut BTreeMap<i64, RepoItem>,
+    ) -> Result<usize, CrawlerError> {
         let mut pages = 0;
         while pages < self.config.general.max_pages_per_cycle {
             self.available(RateResource::Core).await?;
-            let url = state.sequential_next_url.clone().unwrap_or_else(|| format!("https://api.github.com/repositories?since={}&per_page=100", state.sequential_since));
+            let url = state.sequential_next_url.clone().unwrap_or_else(|| {
+                format!(
+                    "https://api.github.com/repositories?since={}&per_page=100",
+                    state.sequential_since
+                )
+            });
             let page = self.crawler.fetch_repositories_page(&url).await?;
             pages += 1;
             for raw in page.items {
@@ -350,20 +441,40 @@ impl Engine {
                 insert_candidate(candidates, item);
             }
             state.sequential_next_url = page.next_url;
-            if state.sequential_next_url.is_none() { break; }
+            if state.sequential_next_url.is_none() {
+                break;
+            }
         }
         Ok(pages)
     }
 
-    async fn collect_search(&self, state: &mut AppState, candidates: &mut BTreeMap<i64, RepoItem>) -> Result<usize, CrawlerError> {
+    async fn collect_search(
+        &self,
+        state: &mut AppState,
+        candidates: &mut BTreeMap<i64, RepoItem>,
+    ) -> Result<usize, CrawlerError> {
         if state.search_windows.is_empty() {
-            let start = parse_timestamp(&state.search_watermark).map_err(|_| CrawlerError::InvalidQuery)?;
+            let start =
+                parse_timestamp(&state.search_watermark).map_err(|_| CrawlerError::InvalidQuery)?;
             let end = Utc::now() - ChronoDuration::seconds(120);
-            if start >= end { return Ok(0); }
-            let queries = if self.config.streams.search_queries.is_empty() { vec![String::new()] } else { self.config.streams.search_queries.clone() };
+            if start >= end {
+                return Ok(0);
+            }
+            let queries = if self.config.streams.search_queries.is_empty() {
+                vec![String::new()]
+            } else {
+                self.config.streams.search_queries.clone()
+            };
             state.search_target_end = timestamp(end);
             for (query_index, query) in queries.into_iter().enumerate() {
-                state.search_windows.push(SearchWindow { start:timestamp(start), end:timestamp(end), page:1, query_index, expected_total:None, query });
+                state.search_windows.push(SearchWindow {
+                    start: timestamp(start),
+                    end: timestamp(end),
+                    page: 1,
+                    query_index,
+                    expected_total: None,
+                    query,
+                });
             }
         }
         let mut pages = 0;
@@ -376,8 +487,10 @@ impl Engine {
             apply_search_page(state, page, candidates)?;
         }
         if state.search_windows.is_empty() && !state.search_target_end.is_empty() {
-            let end = parse_timestamp(&state.search_target_end).map_err(|_| CrawlerError::InvalidQuery)?;
-            state.search_watermark = timestamp(end - ChronoDuration::seconds(SEARCH_OVERLAP_SECONDS));
+            let end = parse_timestamp(&state.search_target_end)
+                .map_err(|_| CrawlerError::InvalidQuery)?;
+            state.search_watermark =
+                timestamp(end - ChronoDuration::seconds(SEARCH_OVERLAP_SECONDS));
             state.search_target_end.clear();
             state.last_search_at = Utc::now().timestamp();
         }
@@ -385,8 +498,16 @@ impl Engine {
     }
 }
 
-fn apply_search_page(state: &mut AppState, page: Page<GithubRepositoryRaw>, candidates: &mut BTreeMap<i64, RepoItem>) -> Result<(), CrawlerError> {
-    let window = state.search_windows.first().cloned().ok_or(CrawlerError::InvalidQuery)?;
+fn apply_search_page(
+    state: &mut AppState,
+    page: Page<GithubRepositoryRaw>,
+    candidates: &mut BTreeMap<i64, RepoItem>,
+) -> Result<(), CrawlerError> {
+    let window = state
+        .search_windows
+        .first()
+        .cloned()
+        .ok_or(CrawlerError::InvalidQuery)?;
     if page.incomplete_results || page.total_count.is_some_and(|total| total > 1000) {
         let start = parse_timestamp(&window.start).map_err(|_| CrawlerError::InvalidQuery)?;
         let end = parse_timestamp(&window.end).map_err(|_| CrawlerError::InvalidQuery)?;
@@ -408,7 +529,10 @@ fn apply_search_page(state: &mut AppState, page: Page<GithubRepositoryRaw>, cand
         return Ok(());
     }
     let total = page.total_count.ok_or(CrawlerError::Json)?;
-    if window.expected_total.is_some_and(|previous| previous != total) {
+    if window
+        .expected_total
+        .is_some_and(|previous| previous != total)
+    {
         state.search_windows[0].page = 1;
         state.search_windows[0].expected_total = None;
         return Err(CrawlerError::InvalidQuery);
@@ -420,7 +544,9 @@ fn apply_search_page(state: &mut AppState, page: Page<GithubRepositoryRaw>, cand
         insert_candidate(candidates, item);
     }
     let covered = window.page.saturating_mul(100);
-    let expected_on_page = total.saturating_sub(window.page.saturating_sub(1).saturating_mul(100)).min(100);
+    let expected_on_page = total
+        .saturating_sub(window.page.saturating_sub(1).saturating_mul(100))
+        .min(100);
     if count != expected_on_page {
         return Err(CrawlerError::InvalidQuery);
     }
@@ -437,33 +563,73 @@ fn apply_search_page(state: &mut AppState, page: Page<GithubRepositoryRaw>, cand
 }
 
 fn insert_candidate(candidates: &mut BTreeMap<i64, RepoItem>, item: RepoItem) {
-    if item.private { return; }
-    if candidates.get(&item.id).is_some_and(|old| old.metadata_complete && !item.metadata_complete) { return; }
+    if item.private {
+        return;
+    }
+    if candidates
+        .get(&item.id)
+        .is_some_and(|old| old.metadata_complete && !item.metadata_complete)
+    {
+        return;
+    }
     candidates.insert(item.id, item);
 }
 
 fn source_due(state: &AppState, name: &str, now: i64) -> bool {
-    state.sources.iter().find(|source| source.name == name).is_none_or(|source| now >= source.next_allowed_at)
+    state
+        .sources
+        .iter()
+        .find(|source| source.name == name)
+        .is_none_or(|source| now >= source.next_allowed_at)
 }
 
-fn set_source(state: &mut AppState, name: &str, status: &str, message: &str, success: i64, next: i64) {
+fn set_source(
+    state: &mut AppState,
+    name: &str,
+    status: &str,
+    message: &str,
+    success: i64,
+    next: i64,
+) {
     if let Some(source) = state.sources.iter_mut().find(|source| source.name == name) {
         source.status = status.into();
         source.message = message.into();
         source.last_success_at = source.last_success_at.max(success);
         source.next_allowed_at = next;
     } else {
-        state.sources.push(SourceStatus { name:name.into(), status:status.into(), message:message.into(), last_success_at:success, next_allowed_at:next });
+        state.sources.push(SourceStatus {
+            name: name.into(),
+            status: status.into(),
+            message: message.into(),
+            last_success_at: success,
+            next_allowed_at: next,
+        });
     }
 }
 
 fn source_error(state: &mut AppState, name: &str, error: &CrawlerError, now: i64) {
-    let wait = match error { CrawlerError::RateLimited(wait) => *wait, _ => 60 };
+    let wait = match error {
+        CrawlerError::RateLimited(wait) => *wait,
+        _ => 60,
+    };
     let jitter = (now as u64 ^ name.bytes().map(u64::from).sum::<u64>()) % 11;
     let message = if matches!(error, CrawlerError::InvalidQuery) && name == "search" {
         "Search coverage is incomplete or the query is invalid; the blocking window and watermark were retained. Narrow the query or inspect the persisted state.".into()
-    } else { error.to_string() };
-    set_source(state, name, if matches!(error, CrawlerError::RateLimited(_)) { "rate_limited" } else { "degraded" }, &message, 0, now.saturating_add(wait.saturating_add(jitter).min(i64::MAX as u64) as i64));
+    } else {
+        error.to_string()
+    };
+    set_source(
+        state,
+        name,
+        if matches!(error, CrawlerError::RateLimited(_)) {
+            "rate_limited"
+        } else {
+            "degraded"
+        },
+        &message,
+        0,
+        now.saturating_add(wait.saturating_add(jitter).min(i64::MAX as u64) as i64),
+    );
     warn!(source = name, error = %error, "source failed independently; completed pages will be committed with their data");
 }
 
@@ -472,22 +638,37 @@ fn timestamp(value: DateTime<Utc>) -> String {
 }
 
 fn parse_timestamp(value: &str) -> Result<DateTime<Utc>, EngineError> {
-    DateTime::parse_from_rfc3339(value).map(|value| value.with_timezone(&Utc)).map_err(|_| EngineError::InvalidState)
+    DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|_| EngineError::InvalidState)
 }
 
 fn validate_state(state: &AppState) -> Result<(), EngineError> {
-    if !(1..=3).contains(&state.schema_version) || state.sequential_since < 0 || state.search_windows.len() > MAX_SEARCH_WINDOWS || state.pending_event_repositories.len() > 1000 {
+    if !(1..=3).contains(&state.schema_version)
+        || state.sequential_since < 0
+        || state.search_windows.len() > MAX_SEARCH_WINDOWS
+        || state.pending_event_repositories.len() > 1000
+    {
         return Err(EngineError::InvalidState);
     }
     parse_timestamp(&state.search_watermark)?;
-    if !state.search_target_end.is_empty() { parse_timestamp(&state.search_target_end)?; }
-    if !state.search_windows.is_empty() && state.search_target_end.is_empty() { return Err(EngineError::InvalidState); }
+    if !state.search_target_end.is_empty() {
+        parse_timestamp(&state.search_target_end)?;
+    }
+    if !state.search_windows.is_empty() && state.search_target_end.is_empty() {
+        return Err(EngineError::InvalidState);
+    }
     for window in &state.search_windows {
-        if !(1..=10).contains(&window.page) || parse_timestamp(&window.start)? >= parse_timestamp(&window.end)? || window.query.len() > 4096 {
+        if !(1..=10).contains(&window.page)
+            || parse_timestamp(&window.start)? >= parse_timestamp(&window.end)?
+            || window.query.len() > 4096
+        {
             return Err(EngineError::InvalidState);
         }
     }
-    for name in &state.pending_event_repositories { crate::crawler::validate_repository_name(name)?; }
+    for name in &state.pending_event_repositories {
+        crate::crawler::validate_repository_name(name)?;
+    }
     Ok(())
 }
 
@@ -496,20 +677,35 @@ async fn dispatch_pending(db: &Database, config: &AppConfig) -> Result<usize, En
     let started = Instant::now();
     let mut delivered = 0;
     for _ in 0..50 {
-        if started.elapsed() >= Duration::from_secs(30) { break; }
+        if started.elapsed() >= Duration::from_secs(30) {
+            break;
+        }
         // Claim individually: a slow channel cannot expire leases of waiting rows.
-        let Some(message) = db.claim_outbox(1)?.into_iter().next() else { break; };
+        let Some(message) = db.claim_outbox(1)?.into_iter().next() else {
+            break;
+        };
         let result = if matches!(message.channel.as_str(), "log" | "jsonl") {
             let config = config.clone();
             let message = message.clone();
-            tokio::task::spawn_blocking(move || write_event_output(&config, &message)).await
+            tokio::task::spawn_blocking(move || write_event_output(&config, &message))
+                .await
                 .map_err(|_| "Local output worker failed.".to_string())
                 .and_then(|result| result.map_err(|_| "Local output write failed.".to_string()))
         } else {
-            notifier.deliver(&message.channel, std::slice::from_ref(&message.payload), &message.event_key).await.map_err(|error| error.to_string())
+            notifier
+                .deliver(
+                    &message.channel,
+                    std::slice::from_ref(&message.payload),
+                    &message.event_key,
+                )
+                .await
+                .map_err(|error| error.to_string())
         };
         match result {
-            Ok(()) => { db.finish_outbox(message.id, None)?; delivered += 1; }
+            Ok(()) => {
+                db.finish_outbox(message.id, None)?;
+                delivered += 1;
+            }
             Err(error) => {
                 db.finish_outbox(message.id, Some(&error))?;
                 warn!(channel = %message.channel, event = %message.event_key, error = %error, "delivery failed; durable retry scheduled");
@@ -520,24 +716,64 @@ async fn dispatch_pending(db: &Database, config: &AppConfig) -> Result<usize, En
 }
 
 fn write_event_output(config: &AppConfig, message: &OutboxMessage) -> std::io::Result<()> {
-    let parent = Path::new(&config.storage.database_path).parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
-    let month = DateTime::parse_from_rfc3339(&message.payload.discovered_at).map_err(|_| std::io::Error::other("Invalid event timestamp"))?.format("%Y-%m").to_string();
+    let parent = Path::new(&config.storage.database_path)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let month = DateTime::parse_from_rfc3339(&message.payload.discovered_at)
+        .map_err(|_| std::io::Error::other("Invalid event timestamp"))?
+        .format("%Y-%m")
+        .to_string();
     let directory = parent.join("outputs").join(month);
     ensure_output_directory(&directory)?;
     let name = message.event_key.replace(':', "-");
-    if !name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') { return Err(std::io::Error::other("Invalid event key")); }
+    if !name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(std::io::Error::other("Invalid event key"));
+    }
     let content = if message.channel == "jsonl" {
         let mut value = serde_json::to_value(&message.payload).map_err(std::io::Error::other)?;
         value["event_key"] = serde_json::Value::String(message.event_key.clone());
-        format!("{}\n", serde_json::to_string(&value).map_err(std::io::Error::other)?)
+        format!(
+            "{}\n",
+            serde_json::to_string(&value).map_err(std::io::Error::other)?
+        )
     } else {
-        let description: String = message.payload.description.as_deref().unwrap_or("No description").chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
-        format!("{} | {} | {} | {}\n", message.event_key, message.payload.full_name, description, message.payload.html_url)
+        let description: String = message
+            .payload
+            .description
+            .as_deref()
+            .unwrap_or("No description")
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        format!(
+            "{} | {} | {} | {}\n",
+            message.event_key, message.payload.full_name, description, message.payload.html_url
+        )
     };
-    let path = directory.join(format!("{name}.{}", if message.channel == "jsonl" { "jsonl" } else { "log" }));
-    if path.exists() { return verify_output(&path, content.as_bytes()); }
-    let temporary = directory.join(format!(".{name}.{}-{}.tmp", std::process::id(), message.attempts));
-    let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+    let path = directory.join(format!(
+        "{name}.{}",
+        if message.channel == "jsonl" {
+            "jsonl"
+        } else {
+            "log"
+        }
+    ));
+    if path.exists() {
+        return verify_output(&path, content.as_bytes());
+    }
+    let temporary = directory.join(format!(
+        ".{name}.{}-{}.tmp",
+        std::process::id(),
+        message.attempts
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
     let result = (|| {
         file.write_all(content.as_bytes())?;
         file.sync_all()?;
@@ -545,7 +781,9 @@ fn write_event_output(config: &AppConfig, message: &OutboxMessage) -> std::io::R
         // A hard-link publishes without overwriting an existing event, then removes the temporary name.
         match fs::hard_link(&temporary, &path) {
             Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => verify_output(&path, content.as_bytes()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                verify_output(&path, content.as_bytes())
+            }
             Err(error) => Err(error),
         }
     })();
@@ -562,7 +800,9 @@ fn ensure_output_directory(path: &Path) -> std::io::Result<()> {
         }
         match fs::symlink_metadata(&current) {
             Ok(metadata) => {
-                if !metadata.is_dir() || is_link(&metadata) { return Err(std::io::Error::other("Unsafe output directory")); }
+                if !metadata.is_dir() || is_link(&metadata) {
+                    return Err(std::io::Error::other("Unsafe output directory"));
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => fs::create_dir(&current)?,
             Err(error) => return Err(error),
@@ -573,17 +813,32 @@ fn ensure_output_directory(path: &Path) -> std::io::Result<()> {
 
 fn is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
-    { use std::os::windows::fs::MetadataExt; metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0 }
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0
+    }
     #[cfg(not(windows))]
-    { metadata.file_type().is_symlink() }
+    {
+        metadata.file_type().is_symlink()
+    }
 }
 
 fn verify_output(path: &Path, expected: &[u8]) -> std::io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() || is_link(&metadata) || metadata.len() != expected.len() as u64 { return Err(std::io::Error::other("Existing output conflicts with the event")); }
+    if !metadata.is_file() || is_link(&metadata) || metadata.len() != expected.len() as u64 {
+        return Err(std::io::Error::other(
+            "Existing output conflicts with the event",
+        ));
+    }
     let mut actual = Vec::new();
-    fs::File::open(path)?.take(expected.len() as u64 + 1).read_to_end(&mut actual)?;
-    if actual != expected { return Err(std::io::Error::other("Existing output conflicts with the event")); }
+    fs::File::open(path)?
+        .take(expected.len() as u64 + 1)
+        .read_to_end(&mut actual)?;
+    if actual != expected {
+        return Err(std::io::Error::other(
+            "Existing output conflicts with the event",
+        ));
+    }
     Ok(())
 }
 
@@ -592,17 +847,34 @@ mod tests {
     use super::*;
 
     fn window() -> SearchWindow {
-        SearchWindow { start:"2026-10-01T00:00:00Z".into(), end:"2026-10-01T01:00:00Z".into(), page:1, query_index:0, expected_total:None, query:String::new() }
+        SearchWindow {
+            start: "2026-10-01T00:00:00Z".into(),
+            end: "2026-10-01T01:00:00Z".into(),
+            page: 1,
+            query_index: 0,
+            expected_total: None,
+            query: String::new(),
+        }
     }
 
     fn page(total: usize, incomplete: bool) -> Page<GithubRepositoryRaw> {
-        Page { items:vec![], next_url:None, etag:None, poll_interval:None, total_count:Some(total), incomplete_results:incomplete }
+        Page {
+            items: vec![],
+            next_url: None,
+            etag: None,
+            poll_interval: None,
+            total_count: Some(total),
+            incomplete_results: incomplete,
+        }
     }
 
     #[test]
     fn search_splits_saturated_or_incomplete_windows_without_advancing_watermark() {
         for response in [page(1001, false), page(1, true)] {
-            let mut state = AppState { search_windows:vec![window()], ..Default::default() };
+            let mut state = AppState {
+                search_windows: vec![window()],
+                ..Default::default()
+            };
             let before = state.search_watermark.clone();
             apply_search_page(&mut state, response, &mut BTreeMap::new()).unwrap();
             assert_eq!(state.search_windows.len(), 2);
@@ -615,14 +887,20 @@ mod tests {
     fn incomplete_one_second_window_is_retained_as_a_gap() {
         let mut window = window();
         window.end = "2026-10-01T00:00:01Z".into();
-        let mut state = AppState { search_windows:vec![window], ..Default::default() };
+        let mut state = AppState {
+            search_windows: vec![window],
+            ..Default::default()
+        };
         assert!(apply_search_page(&mut state, page(2000, false), &mut BTreeMap::new()).is_err());
         assert_eq!(state.search_windows.len(), 1);
     }
 
     #[test]
     fn search_does_not_skip_short_pages_or_mutating_totals() {
-        let mut state = AppState { search_windows:vec![window()], ..Default::default() };
+        let mut state = AppState {
+            search_windows: vec![window()],
+            ..Default::default()
+        };
         assert!(apply_search_page(&mut state, page(150, false), &mut BTreeMap::new()).is_err());
         assert_eq!(state.search_windows[0].page, 1);
         state.search_windows[0].page = 2;
@@ -633,7 +911,10 @@ mod tests {
 
     #[test]
     fn completed_empty_window_is_removed() {
-        let mut state = AppState { search_windows:vec![window()], ..Default::default() };
+        let mut state = AppState {
+            search_windows: vec![window()],
+            ..Default::default()
+        };
         apply_search_page(&mut state, page(0, false), &mut BTreeMap::new()).unwrap();
         assert!(state.search_windows.is_empty());
     }
@@ -660,6 +941,9 @@ mod tests {
         let mut engine = Engine::new(config, db.clone()).unwrap();
         let result = engine.run_cycle().await.unwrap();
         assert!(result.items.is_empty());
-        assert_eq!(db.load_state().unwrap().unwrap().checked, engine.state.checked);
+        assert_eq!(
+            db.load_state().unwrap().unwrap().checked,
+            engine.state.checked
+        );
     }
 }

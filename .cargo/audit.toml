@@ -1,0 +1,11 @@
+[advisories]
+ignore = [
+    # quick-xml 0.30.0 is an indirect dependency of accesskit_unix (Linux-only accessibility via eframe).
+    # BloomRepo does not use quick-xml for untrusted input parsing.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    # paste 1.0.15 is unmaintained, used as a proc-macro helper in accesskit_windows (eframe).
+    "RUSTSEC-2024-0436",
+    # ttf-parser 0.25.1 is unmaintained, used transitively by epaint/ab_glyph for font rendering in eframe.
+    "RUSTSEC-2026-0192",
+]

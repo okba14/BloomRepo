@@ -821,9 +821,11 @@ mod tests {
 
     #[tokio::test]
     async fn toast_priority_setting_does_not_drop_other_channels() {
-        let mut config = NotificationsConfig::default();
-        config.toast_priority_only = true;
-        config.webhook_url = Some("https://localhost/hook".into());
+        let config = NotificationsConfig {
+            toast_priority_only: true,
+            webhook_url: Some("https://localhost/hook".into()),
+            ..Default::default()
+        };
         let notifier = Notifier::new(config);
         assert!(matches!(
             notifier.deliver("webhook", &[repo(1)], "test").await,
@@ -835,8 +837,10 @@ mod tests {
 
     #[tokio::test]
     async fn private_rows_and_header_injection_fail_before_network() {
-        let mut config = NotificationsConfig::default();
-        config.webhook_url = Some("https://localhost/hook".into());
+        let config = NotificationsConfig {
+            webhook_url: Some("https://localhost/hook".into()),
+            ..Default::default()
+        };
         let notifier = Notifier::new(config);
         let mut private = repo(1);
         private.private = true;
