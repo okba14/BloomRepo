@@ -1,310 +1,236 @@
-<p align="center">
-  <img src="img/redme.jpeg" alt="BloomRepo Banner" width="100%" />
-</p>
+# BloomRepo 3.0
 
-<h1 align="center">
-  <img src="img/icon.png" width="36" height="36" valign="middle" alt="BloomRepo Logo" />
-  BloomRepo
-</h1>
+![BloomRepo Banner](img/banner.png)
 
-<p align="center">
-  <strong>A reliable, high-performance GitHub repository discovery and monitoring engine built in Rust.</strong>
-</p>
+<div align="center">
 
-<p align="center">
-  <a href="#key-highlights"><img src="https://img.shields.io/badge/Language-Rust_2021-orange.svg?style=flat-square&logo=rust" alt="Rust 2021" /></a>
-  <a href="#persistent-storage--fts5-search"><img src="https://img.shields.io/badge/Storage-SQLite_WAL_%2B_FTS5-003B57.svg?style=flat-square&logo=sqlite" alt="SQLite FTS5" /></a>
-  <a href="#desktop-gui-experience"><img src="https://img.shields.io/badge/GUI-egui_%2F_eframe-7952B3.svg?style=flat-square" alt="egui" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="MIT License" /></a>
-  <a href="#verification--testing"><img src="https://img.shields.io/badge/Tests-10%2F10_Passing-brightgreen.svg?style=flat-square" alt="Tests" /></a>
-</p>
+[![Rust Version](https://img.shields.io/badge/rust-1.89%2B-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg?style=flat-square)](#install)
+[![Architecture](https://img.shields.io/badge/architecture-Local--First%20%7C%20Zero--AI-success.svg?style=flat-square)](#architecture--trust-boundaries)
+[![Standards](https://img.shields.io/badge/standards-CycloneDX%201.5%20%7C%20OSV-informational.svg?style=flat-square)](#authorized-analysis)
+
+**Local-first public GitHub repository discovery, monitoring, and authorized local static analysis.**
+
+A unified Rust engine drives both a headless CLI and a native `egui`/`eframe` desktop interface.  
+Repository history, field-level change logs, triage decisions, and a transactional notification outbox are stored durably in SQLite.  
+**Strictly zero AI services are used.**
+
+</div>
 
 ---
 
 ## Overview
 
-**BloomRepo** is a local-first, low-overhead intelligence tool designed for discovering, indexing, filtering, and monitoring public GitHub repositories as they are published. Built entirely in native Rust, BloomRepo pairs a high-throughput background engine with both a sleek graphical desktop interface (GUI) and a clean terminal workflow (CLI).
+Most repository discovery tools act as dumb firehoses: they scrape URLs, spam notifications on raw keywords, and drop state during crashes. **BloomRepo 3.0** is built on defensive systems engineering:
 
-Rather than making unrealistic marketing claims of being an omniscient global firehose, BloomRepo operates with **transparent, honest engineering**: it navigates public GitHub REST API quotas conservatively, maintains isolated stream cursors, enforces persistent deduplication in local SQLite, and dispatches non-blocking notifications across multiple platforms.
-
----
-
-## Honest Scope & Transparency
-
-To maintain engineering credibility and integrity:
-
-* **API Boundary Truth:** GitHub's public REST APIs enforce hard rate limits (`Core` resource limits are 60 req/hr unauthenticated or 5,000 req/hr with a Personal Access Token; `Search` limits are restricted to 10–30 req/min). Public event streams only expose a moving window of recent public activity.
-* **Realistic Coverage:** BloomRepo is a *discovery & monitoring engine*, not an internal GitHub firehose. It captures public activity systematically through three distinct, balanced streams without exhaustively spamming GitHub servers or risking account bans.
-* **Guaranteed Deduplication:** Every repository is normalized, evaluated against spam filters, and upserted into SQLite. Repositories already indexed locally never trigger duplicate alerts, log spam, or duplicate JSONL entries.
-* **Zero Telemetry / 100% Privacy:** Your tokens, searches, logs, and database remain strictly local on your machine. No analytics or private metrics are transmitted to any third party.
+- **Reliability First (Transactional Outbox)**: Discovered items, cursor progression, observation history, and notification events commit inside a single atomic SQLite transaction. If a crash or network partition occurs, unhandled deliveries remain persisted with bounded exponential backoff and jitter.
+- **Change Intelligence over URL Dumps**: Tracks historical field modifications (releases, licenses, descriptions, archiving) for watched projects rather than alerting only on new names.
+- **Explainable Triage**: Replaces arbitrary single-number scores with decoupled metrics: **Relevance** (interest keywords), **Confidence** (metadata completeness), and **Security Importance** (explicitly unassessed at discovery; requires authorized local analysis). Incomplete metadata is deferred for enrichment rather than dropped prematurely.
+- **Authorized Defensive Analysis**: Sandboxed, read-only local directory analyzer. Performs bounded dependency inventory (`Cargo.lock`, `package-lock.json`, Python/uv lockfiles), CycloneDX 1.5 JSON SBOM generation, regex secret scrubbing, and opt-in OSV vulnerability queries without executing scanned project code.
+- **Fail-Closed Security Boundaries**: Enforces verified public HTTPS endpoints for Webhooks/Discord/Telegram, rejects SSRF and internal IP ranges, blocks redirects, and redacts secrets from database rows and operational logs.
 
 ---
 
-## Key Highlights
+## Architecture & Trust Boundaries
 
-- **Shared Rust Engine:** A single asynchronous core powered by Tokio drives both the graphical desktop application (`egui`/`eframe`) and the continuous terminal monitor.
-- **Independent Stream Cursors:** Sequential repository pagination, search watermarks, and event ETags maintain isolated progression states—one stream's failure never corrupts another's cursor.
-- **Dual Rate-Limit Bucket Tracking:** Separate runtime tracking for `Core` vs `Search` resources per token, automatically respecting `x-ratelimit-remaining`, `x-ratelimit-reset`, and `Retry-After`.
-- **Cold-Start Auto-Anchoring:** New installations automatically anchor their sequential cursor to the latest repository on GitHub or your local database, eliminating startup deadlocks.
-- **Sanitized FTS5 Full-Text Search:** Built-in SQLite FTS5 search with automatic query sanitization—search complex programming terms like `c++`, `node.js`, or quoted phrases without SQL syntax errors.
-- **Persistent Local Storage:** SQLite with Write-Ahead Logging (WAL), normalized schema with triggers, busy-timeout handling, and atomic state saving.
-- **Flexible Spam & Priority Filtering:** Filter out spam, auto-generated names, homework templates, and forks. Match user-defined priority keywords across repository names, descriptions, and topics.
-- **Multi-Channel Dispatcher:** Native Windows Toast notifications (isolated UTF-16LE Base64 execution), Discord Webhooks, Telegram Bots, and generic HTTP Webhooks.
-
----
-
-## Architecture
-
-```text
-                               GitHub Public REST API
-                                         │
-        ┌────────────────────────────────┼────────────────────────────────┐
-        ▼                                ▼                                ▼
-  [Sequential Stream]             [Events Stream]                  [Search Stream]
-  Link: rel="next" traversal      ETag-aware best-effort          Interval-controlled
-  Independent cursor              freshness layer                  lookback query
-        │                                │                                │
-        └────────────────────────────────┼────────────────────────────────┘
-                                         ▼
-                             Normalization & Sanitization
-                                         │
-                                         ▼
-                            Rule-Based Filtering Engine
-                          (Spam / Language / Forks / Tags)
-                                         │
-                                         ▼
-                             Persistent Deduplication
-                            (Local SQLite ID Matcher)
-                                         │
-                                         ▼
-                             SQLite Transaction (WAL)
-                        ┌────────────────┴────────────────┐
-                        ▼                                 ▼
-                 FTS5 Index Triggers              Atomic Output Pipeline
-                  (AI / AD / AU)                 (Log / JSONL / Alerts)
-                        │                                 │
-                        ▼                                 ▼
-             Desktop GUI / CLI Search            Multi-Channel Alerts
-             (Instant Interactive UI)           (Toast / Discord / TG)
+```
+                    +------------------------------------------+
+                    |           GitHub Public API              |
+                    |  (/events, /search, /repositories, tags) |
+                    +--------------------+---------------------+
+                                         |  Fail-Closed HTTP (Pinned, TLS 1.3)
+                                         v
++---------------------------------------------------------------------------------+
+|                                 BloomRepo Engine                                |
+|                                                                                 |
+|   +-------------------+    +--------------------+    +----------------------+   |
+|   |   GithubCrawler   |--->|     RepoFilter     |--->|       Database       |   |
+|   | (Token Pool / RL) |    |  (Decision Engine) |    |  (WAL / Trans. Outbox|   |
+|   +-------------------+    +--------------------+    +----------+-----------+   |
+|                                                                 |               |
+|                                          +----------------------+               |
+|                                          v                                      |
+|                       +------------------------------------+                    |
+|                       |        Outbox Dispatcher           |                    |
+|                       | (Leasing, Retries, Idempotent Key) |                    |
+|                       +------------------+-----------------+                    |
++------------------------------------------|--------------------------------------+
+                                           |
+               +---------------------------+---------------------------+
+               v                           v                           v
+     +-------------------+       +-------------------+       +-------------------+
+     | Local File Shards |       | Desktop Toasts    |       | Secure Webhooks   |
+     | (YYYY-MM/*.jsonl) |       | (PowerShell / OS) |       | (Discord/Telegram)|
+     +-------------------+       +-------------------+       +-------------------+
 ```
 
 ---
 
-## Source Streams Explained
+## Workspaces (Desktop GUI)
 
-1. **Sequential Listing Stream (`/repositories?since=...`)**  
-   Provides broad sequential traversal. Its cursor advances only upon verified transaction commits and strictly follows GitHub's `Link: rel="next"` response headers.
-2. **Events Polling Stream (`/events`)**  
-   Captures immediate freshness from public `CreateEvent` notifications. Uses HTTP conditional requests (`ETag` / `If-None-Match`) to save quota when no new events have occurred.
-3. **Search Stream (`/search/repositories?q=created:>...`)**  
-   Discovers recently published repositories matching configured search lookback intervals. Operates in an isolated throttled bucket to safeguard Search API rate limits.
-
----
-
-## Desktop GUI Experience
-
-The desktop interface is built using `eframe` and `egui`, providing:
-
-* **Visual Identity & Icon:** Features an embedded custom application icon in the window titlebar and UI panels.
-* **Real-Time Statistics:** Total repositories indexed, items discovered today, priority alerts, and filtered items.
-* **Instant Full-Text Search:** Search thousands of indexed repositories with instant response times, fork toggles, and priority-only filters.
-* **Control Actions:** One-click manual scan, pause/resume monitoring, and instant browser opening.
-* **Integrated Architect & System Profile:** Discrete, non-intrusive access to developer credentials, security research background, and official contacts directly from the UI.
+| Workspace | Description & Available Operations |
+| :--- | :--- |
+| **Overview** | Real-time discovery metrics, active source telemetry, manual scan triggering, and quick triage review shortcuts. |
+| **Discover** | Paginated local search with filters for priority, forks, rejected items, and review status. Displays full transparent assessment reasons and missing evidence. |
+| **Watchlist** | Dedicated view of stored watched repositories with observed field-level change history (`changes` audit log). |
+| **Security** | Bounded local static directory scanner: dependency inventory, CycloneDX 1.5 JSON exports, OSV vulnerability checks, and secret finding summaries. |
+| **Health** | Live operational status for each ingestion stream (events, search, sequential, enrichment, watch), outbox pending/failed counts, and manual delivery retry. |
+| **Settings** | Redacted configuration viewer, channel connectivity checks, rule re-evaluation, and live online SQLite database backups. |
 
 ---
 
-## Requirements
+## Install & Build
 
-* **Operating System:** Windows 10 or later (native desktop GUI & toast alerts). Linux and macOS support CLI and core engine.
-* **Rust:** Stable Rust toolchain (2021 edition).
-* **GitHub Token:** A Personal Access Token (PAT) is strongly recommended for standard 5,000 req/hr limits (read-only public access is sufficient).
+### Requirements
+- [Rust](https://rustup.rs/) **1.89 or newer** (uses `std::fs::File::try_lock` for cross-process instance locking).
+- **Windows**: Windows 10/11 x64 or ARM64.
+- **Linux**: x86_64 or aarch64 (Kernel 5.6+ with `procfs` for secure local directory traversal; native graphics libraries for GUI mode).
+- SQLite is bundled and compiled statically.
 
----
-
-## Quick Start
-
-### 1. Clone the repository
+### Compilation
 
 ```powershell
-git clone https://github.com/okba14/BloomRepo.git
+# Clone the repository
+git clone git@github.com:okba14/BloomRepo.git
 cd BloomRepo
-```
 
-### 2. Configure credentials
+# Setup toolchain
+rustup toolchain install stable --profile minimal
+rustup component add rustfmt clippy --toolchain stable
 
-Copy `.env.example` to `.env` and set your credentials:
-
-```powershell
+# Configure environment overrides
 Copy-Item .env.example .env
-notepad .env
+
+# Build optimized release binary
+cargo build --release --locked
+
+# Validate installation
+.\target\release\bloomrepo.exe --validate-config
+.\target\release\bloomrepo.exe --help
 ```
 
-```dotenv
-GITHUB_TOKEN=your_personal_access_token_here
-GITHUB_USER_AGENT=BloomRepo/2.1 (+https://github.com/)
-GITHUB_TIMEOUT_SECONDS=25
-
-# Optional notification webhooks
-DISCORD_WEBHOOK_URL=
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-WEBHOOK_URL=
+On Linux:
+```bash
+cp .env.example .env
+cargo build --release --locked
+./target/release/bloomrepo --validate-config
+./target/release/bloomrepo --help
 ```
-
-> **Security Note:** Never commit your `.env` file. The repository `.gitignore` automatically excludes `.env`, `repos.db*`, `_state.json`, and output logs.
-
-### 3. Build & Run
-
-**Build the optimized release binary:**
-```powershell
-cargo build --release
-```
-
-**Launch the Desktop GUI:**
-```powershell
-.\target\release\bloomrepo.exe --gui
-```
-*(Or double-click `Run Watcher.bat`)*
-
-**Launch the Terminal CLI Monitor:**
-```powershell
-.\target\release\bloomrepo.exe --cli
-```
-*(Or double-click `Run Watcher (Terminal).bat`)*
-
-**Run a single discovery cycle:**
-```powershell
-.\target\release\bloomrepo.exe --once
-```
-*(Or double-click `Check Once.bat`)*
 
 ---
 
-## Command-Line Interface (CLI)
+## CLI Reference
 
 ```text
-bloomrepo.exe [OPTIONS]
+bloomrepo [--config PATH] [ACTION]
 ```
 
-| Flag / Option | Description |
-|---|---|
-| `--gui` | Launch the native graphical desktop interface (default if no flags). |
-| `--cli` | Run the continuous terminal monitor. |
-| `--once` | Execute a single scan cycle, persist outputs, and exit cleanly. |
-| `--stats` | Query SQLite and print instantaneous database metrics. |
-| `--search <query>` | Query the local FTS5 full-text search index (e.g. `--search "c++"`). |
-| `--rebuild-fts` | Manually rebuild the SQLite FTS5 search index. |
-| `--config <path>` | Specify a custom path to `config.toml` (default: `config.toml`). |
+| Action | Behavior & Guarantees |
+| :--- | :--- |
+| `--gui` | Open the desktop GUI application (default when no action is passed). |
+| `--cli`, `--terminal` | Run discovery and background outbox dispatcher continuously in the terminal. |
+| `--once` | Execute exactly one discovery cycle and one outbox delivery pass. Exits non-zero on operation errors. |
+| `--validate-config` | Offline validation of `config.toml`; contacts no remote hosts and opens no database. |
+| `--stats` | Display repository totals, priority counts, and discovery figures from local SQLite storage. |
+| `--health` | Report per-source status (healthy, rate-limited, catching up), outbox backlog, and observations. |
+| `--search QUERY` | Query the local SQLite FTS5 index (capped at 50 results). |
+| `--rebuild-fts` | Rebuild and optimize the local full-text search table. |
+| `--watch OWNER/REPO` | Enable change and release tag tracking for a stored repository. |
+| `--unwatch OWNER/REPO`| Disable watch tracking for a stored repository. |
+| `--review OWNER/REPO STATE` | Set triage status: `new`, `important`, `needs_review`, `ignored`, or `resolved`. |
+| `--reevaluate` | Re-run current configuration rules across all stored repositories without contacting GitHub. |
+| `--retry-notifications` | Requeue failed outbox events and run a single delivery pass. |
+| `--backup PATH` | Create a consistent online SQLite backup; never overwrites an existing file. |
+| `--analyze PATH --authorized` | Run bounded local static analysis on an authorized directory (read-only, offline by default). |
+| `--osv` | *(With `--analyze` only)* Opt into remote dependency vulnerability queries to OSV. |
+| `--report PATH`, `--sbom PATH` | *(With `--analyze` only)* Export Markdown summary and CycloneDX 1.5 JSON to new files. |
+
+### CLI Usage Examples
+
+```powershell
+# Run a single discovery pass with custom config
+.\target\release\bloomrepo.exe --config config.toml --once
+
+# Search local database for Rust security tools
+.\target\release\bloomrepo.exe --search "rust security"
+
+# Add a discovered project to the watchlist and mark as important
+.\target\release\bloomrepo.exe --watch "tamnd/kime"
+.\target\release\bloomrepo.exe --review "tamnd/kime" important
+
+# Check operational health and outbox status
+.\target\release\bloomrepo.exe --health
+
+# Run authorized offline local analysis and export CycloneDX SBOM
+.\target\release\bloomrepo.exe --analyze "C:\Projects\my-app" --authorized --report report.md --sbom sbom.cdx.json
+
+# Run local analysis with explicit OSV vulnerability lookup consent
+.\target\release\bloomrepo.exe --analyze "C:\Projects\my-app" --authorized --osv
+```
 
 ---
 
-## Configuration (`config.toml`)
+## Authorized Local Static Analysis
 
-All non-secret runtime behaviors can be customized:
+BloomRepo provides safe, read-only static analysis for directories you own or are authorized to inspect.
 
-```toml
-[general]
-interval_seconds = 30
-max_pages_per_cycle = 5
-lookback_hours = 3
-log_level = "info"
-max_concurrent_requests = 4
-search_interval_seconds = 60
+- **Non-Execution Invariant**: Does not invoke `git`, execute repository hooks, install dependencies, or trigger package manager scripts.
+- **Filesystem Traversal Bounds**:
+  - Maximum 10,000 files, 30,000 directory entries, depth 24.
+  - File size capped at 1 MiB per file; 50 MiB total data budget.
+  - 20-second cooperative timeout.
+  - Skips symlinks, junctions, reparse points, non-regular files, hard-linked regular files, and `.git` trees.
+- **Dependency Inventory**: Parses lockfiles for exact dependencies:
+  - Rust: `Cargo.lock`
+  - JavaScript / TypeScript: `package-lock.json`, `pnpm-lock.yaml`
+  - Python: `requirements.txt` (pinned exact versions), `poetry.lock`, `uv.lock`
+  - CycloneDX / SPDX JSON standard imports.
+- **Secret Detection with Redaction**: Recognizes patterns for AWS Access Keys, GitHub Personal Access Tokens, and PEM private keys. Matching secret values and source code snippets are **never stored in the database or exported in reports**.
+- **OSV Disclosures**: Supplying `--osv` sends validated dependency **names, versions, and ecosystems** to `https://api.osv.dev/v1/query`. Scanned source code and local file paths are **never** transmitted.
 
-[auth]
-timeout_seconds = 25
-user_agent = "BloomRepo/2.1 (+https://github.com/)"
+---
 
-[streams]
-enable_sequential_stream = true
-enable_events_stream = true
-enable_search_stream = true
-search_queries = []
+## Configuration & Environment Overrides
 
-[filtering]
-enable_spam_filter = true
-ignore_forks = true
-min_description_length = 0
-ignore_name_patterns = [
-    "^auto-repo-\\d+",
-    "^repo-\\d+$",
-    "^test-\\d+$",
-    "^homework-"
-]
-priority_keywords = ["agent", "security", "exploit", "compiler", "kernel"]
-allowed_languages = []
+`config.toml` contains clean defaults without credentials. Sensitive tokens are loaded strictly from the process environment or a `.env` file **placed beside the selected configuration file**.
 
-[storage]
-database_path = "repos.db"
-state_path = "_state.json"
-enable_wal = true
-enable_log_file = true
-enable_jsonl_stream = true
+Supported environment overrides:
+- `GITHUB_TOKEN` / `GITHUB_TOKENS`: Single or comma-separated GitHub personal access tokens.
+- `DISCORD_WEBHOOK_URL`: Discord webhook endpoint (must be public HTTPS).
+- `TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`: Telegram bot credentials.
+- `CUSTOM_WEBHOOK_URL`: Custom HTTP outbox receiver (includes `Idempotency-Key` header).
+- `ENABLE_WINDOWS_TOAST`: `true` or `false` (Windows toast alerts).
 
-[notifications]
-enable_windows_toast = true
-toast_priority_only = false
-timeout_seconds = 10
-max_items_per_message = 5
-```
+See [`.env.example`](.env.example) for a full template.
 
 ---
 
 ## Verification & Testing
 
-BloomRepo includes an automated unit testing suite:
+BloomRepo maintains strict automated test coverage across database migrations, outbox dispatching, path sandboxing, and parsing boundaries.
 
 ```powershell
-cargo test
-```
+# Format check
+cargo fmt --all -- --check
 
-Expected output:
-```text
-running 10 tests
-test crawler::tests::test_parse_next_link ... ok
-test crawler::tests::test_url_encode ... ok
-test notifier::tests::test_base64_encode ... ok
-test notifier::tests::test_ps_quote ... ok
-test state::tests::legacy_state_file_is_backward_compatible ... ok
-test filter::tests::disabled_spam_filter_still_marks_priority ... ok
-test db::tests::test_existing_ids ... ok
-test db::tests::test_insert_batch_and_get_stats ... ok
-test db::tests::test_fts5_sanitization_and_special_chars ... ok
-test state::tests::atomic_state_round_trip_preserves_independent_cursors ... ok
+# Strict compilation & clippy verification
+cargo check --all-targets --all-features --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
 
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+# Execute test suite (107 tests)
+cargo test --all --all-features --locked
 ```
 
 ---
 
-## Lead Architect & Developer
+## Author & License
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <img src="img/icon.png" width="90" height="90" alt="GUIAR OQBA" /><br />
-      <strong>GUIAR OQBA</strong><br />
-      <sub>Systems Software Architect & Cyber Security Researcher</sub>
-    </td>
-  </tr>
-</table>
+Created by **GUIAR OQBA**, Systems Software Architect & Cyber Security Researcher.
 
-* 🌐 **Official Website:** [https://guiarx.com/](https://guiarx.com/)
-* 📧 **Business & Inquiries:** [contact@guiarx.com](mailto:contact@guiarx.com)
-* 📬 **Direct Contact:** [hello@guiarx.com](mailto:hello@guiarx.com)
+- **Website**: [guiarx.com](https://guiarx.com/)
+- **Business**: [contact@guiarx.com](mailto:contact@guiarx.com)
+- **Direct contact**: [hello@guiarx.com](mailto:hello@guiarx.com)
+- **Optional Support (BTC)**: `12Kh5tfMYqzNwu7QzNvWQ7yLBeGvBERSq6`
 
----
-
-## Support & Voluntary Sponsorship
-
-BloomRepo is an independently developed open-source tool. Using the software is 100% free and does not require any contribution. If BloomRepo brings value to your workflow and you wish to support ongoing maintenance and infrastructure:
-
-* **Bitcoin (BTC Network):**  
-  `12Kh5tfMYqzNwu7QzNvWQ7yLBeGvBERSq6`
-
----
-
-## License
-
-Distributed under the [MIT License](LICENSE).  
-Copyright © 2026 **GUIAR OQBA**. All rights reserved.
+Distributed under the [MIT License](LICENSE). Copyright (c) 2026 GUIAR OQBA.

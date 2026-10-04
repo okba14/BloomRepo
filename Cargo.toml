@@ -1,9 +1,10 @@
 [package]
 name = "bloomrepo"
-version = "2.1.0"
+version = "3.0.0"
 edition = "2021"
+rust-version = "1.89"
 authors = ["GUIAR OQBA"]
-description = "Reliable GitHub repository discovery and monitoring engine"
+description = "Security-first repository discovery, monitoring, and authorized local static analysis"
 
 [dependencies]
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
@@ -13,7 +14,7 @@ serde_json = "1.0"
 toml = "0.8"
 dotenvy = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 regex = "1.10"
 colored = "2.1"
 eframe = "0.29"

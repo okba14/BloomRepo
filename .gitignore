@@ -13,10 +13,13 @@
 *.db-wal
 *.db-shm
 *.db-journal
+*.db.lock
 
 # Runtime state and generated data
 _state.json
 _state.json.tmp
+_state.json.*.tmp
+/outputs/
 *.log
 *.jsonl
 new_repos_*.log

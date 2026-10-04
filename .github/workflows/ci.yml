@@ -4,6 +4,13 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      upload_artifacts:
+        description: Upload unsigned Windows build artifacts to this workflow run
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -12,53 +19,136 @@ concurrency:
   group: bloomrepo-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   quality:
-    name: Format, check, test, and lint
-    runs-on: ubuntu-latest
+    name: Quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          toolchain: stable
-          components: rustfmt, clippy
-          cache: true
+          persist-credentials: false
+
+      # Hosted Ubuntu/Windows runners provide rustup; no toolchain action is needed.
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Select stable toolchain
+        run: rustup default stable
+
+      - name: Install formatting and lint components
+        run: rustup component add rustfmt clippy --toolchain stable
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Check compilation
-        run: cargo check --all-targets --locked
+        run: cargo check --all-targets --all-features --locked
 
       - name: Run tests
-        run: cargo test --all --locked
+        run: cargo test --all --all-features --locked
 
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
-  windows-release:
-    name: Windows release build
-    runs-on: windows-latest
+      - name: Validate example configuration offline
+        run: cargo run --locked -- --config config.toml --validate-config
+
+  audit:
+    name: Audit locked dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Select stable toolchain
+        run: rustup default stable
+
+      # Version verified against crates.io metadata; --locked locks this tool's dependencies.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      # Audit the full lockfile. No target filters, advisory ignores, or warning waivers.
+      - name: Audit dependencies and deny warnings
+        run: cargo audit --deny warnings
+
+  windows-release:
+    name: Unsigned Windows release build
+    needs: [quality, audit]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          toolchain: stable
-          target: x86_64-pc-windows-msvc
-          cache: true
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Select stable toolchain
+        run: rustup default stable
 
       - name: Build release executable
         run: cargo build --release --locked
 
-      - name: Verify executable
+      - name: Prepare binary, SHA-256, inventory, and build information
         shell: pwsh
         run: |
-          if (-not (Test-Path "target/release/bloomrepo.exe")) {
+          if (-not (Test-Path -LiteralPath "target/release/bloomrepo.exe" -PathType Leaf)) {
             throw "BloomRepo executable was not produced"
           }
+          if (-not (Test-Path -LiteralPath "." -PathType Container)) {
+            throw "Build workspace is unavailable"
+          }
+          New-Item -ItemType Directory -Path "artifacts" -ErrorAction Stop
+          Copy-Item -LiteralPath "target/release/bloomrepo.exe" -Destination "artifacts/bloomrepo.exe" -ErrorAction Stop
+          $hash = (Get-FileHash -LiteralPath "artifacts/bloomrepo.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  bloomrepo.exe" | Set-Content -LiteralPath "artifacts/bloomrepo.exe.sha256" -Encoding ascii
+          # Cargo metadata is a dependency inventory, NOT a CycloneDX/SPDX SBOM.
+          cargo metadata --locked --format-version 1 | Set-Content -LiteralPath "artifacts/dependency-inventory.json" -Encoding utf8
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dependency inventory generation failed"
+          }
+          $rustVersion = rustc --version
+          if ($LASTEXITCODE -ne 0) { throw "Cannot record Rust version" }
+          $cargoVersion = cargo --version
+          if ($LASTEXITCODE -ne 0) { throw "Cannot record Cargo version" }
+          # Self-reported build information and hashes are not signing or attestations.
+          @{
+            commit = $env:GITHUB_SHA
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            rustc = $rustVersion
+            cargo = $cargoVersion
+            unsigned = $true
+          } | ConvertTo-Json | Set-Content -LiteralPath "artifacts/build-info.json" -Encoding utf8
+
+      # No automatic upload, release publication, signing, or AI integration.
+      - name: Upload artifacts only with explicit manual opt-in
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_artifacts }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bloomrepo-windows-${{ github.sha }}
+          path: |
+            artifacts/bloomrepo.exe
+            artifacts/bloomrepo.exe.sha256
+            artifacts/dependency-inventory.json
+            artifacts/build-info.json
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
