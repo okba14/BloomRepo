@@ -4,6 +4,7 @@
 
 <div align="center">
 
+[![Crates.io Version](https://img.shields.io/crates/v/bloomrepo.svg?style=flat-square&color=blue)](https://crates.io/crates/bloomrepo)
 [![Rust Version](https://img.shields.io/badge/rust-1.89%2B-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg?style=flat-square)](#install)
@@ -80,15 +81,32 @@ Most repository discovery tools act as dumb firehoses: they scrape URLs, spam no
 
 ---
 
-## Install & Build
+## Installation
 
-### Requirements
+### Option 1: Instant Install via Cargo (Recommended)
+
+BloomRepo is published on [crates.io](https://crates.io/crates/bloomrepo). Install the latest release directly with a single command:
+
+```bash
+cargo install bloomrepo
+```
+
+Verify the installation:
+```bash
+bloomrepo --help
+```
+
+---
+
+### Option 2: Build from Source
+
+#### Requirements
 - [Rust](https://rustup.rs/) **1.89 or newer** (uses `std::fs::File::try_lock` for cross-process instance locking).
 - **Windows**: Windows 10/11 x64 or ARM64.
 - **Linux**: x86_64 or aarch64 (Kernel 5.6+ with `procfs` for secure local directory traversal; native graphics libraries for GUI mode).
 - SQLite is bundled and compiled statically.
 
-### Compilation
+#### Compilation
 
 ```powershell
 # Clone the repository
